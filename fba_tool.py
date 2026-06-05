@@ -34,6 +34,7 @@ QUICK TEST
 
 from __future__ import annotations
 import json
+import re
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -202,6 +203,94 @@ def _reset_to_minimal_medium(model, keep_open: Optional[List[str]] = None) -> No
             ex.bounds = (0.0, 0.0)
 
 
+# Known metabolite C counts when SBML formula is missing (iYLI647 lipids).
+_CARBON_FALLBACK: Dict[str, int] = {
+    "ocdcea_e": 18,
+    "ocdcea_c": 18,
+    "odecoa_c": 18,
+    "oleyl_alcohol_c": 18,
+    "wax_ester_c": 36,
+}
+
+
+def _carbon_atoms(met) -> Optional[int]:
+    """Return number of carbon atoms in a metabolite (None if unknown)."""
+    mid = getattr(met, "id", str(met))
+    if mid in _CARBON_FALLBACK:
+        return _CARBON_FALLBACK[mid]
+    formula = (getattr(met, "formula", None) or "").strip()
+    if not formula:
+        return None
+    m = re.search(r"C(\d+)", formula.replace(" ", ""))
+    if m:
+        return int(m.group(1))
+    if formula == "C":
+        return 1
+    return None
+
+
+def audit_exchange_carbon(
+    model,
+    fluxes,
+    *,
+    feedstock_rxn: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Steady-state carbon audit over boundary exchanges.
+
+    At FBA steady state, internal pools cannot be net carbon sources. If product
+    carbon exceeds named feedstock import, check side_door_carbon_imports first.
+    """
+    imports: List[Dict[str, Any]] = []
+    exports: List[Dict[str, Any]] = []
+
+    for ex in model.exchanges:
+        flux = float(fluxes[ex.id])
+        if abs(flux) < 1e-9:
+            continue
+        c_flux = 0.0
+        for met, coeff in ex.metabolites.items():
+            n = _carbon_atoms(met)
+            if n:
+                c_flux += flux * coeff * n
+        if abs(c_flux) < 1e-9:
+            continue
+        entry = {
+            "exchange": ex.id,
+            "flux_mmol_per_h": round(flux, 4),
+            "carbon_mmol_per_h": round(c_flux, 4),
+        }
+        if c_flux > 0:
+            imports.append(entry)
+        else:
+            exports.append(entry)
+
+    imports.sort(key=lambda x: -x["carbon_mmol_per_h"])
+    exports.sort(key=lambda x: x["carbon_mmol_per_h"])
+    side_doors = [e for e in imports if e["exchange"] != feedstock_rxn]
+    total_c_in = sum(e["carbon_mmol_per_h"] for e in imports)
+    total_c_out = sum(-e["carbon_mmol_per_h"] for e in exports)
+
+    audit_warnings: List[str] = []
+    if side_doors:
+        ids = ", ".join(e["exchange"] for e in side_doors[:5])
+        audit_warnings.append(
+            f"Non-feedstock carbon imports detected ({ids}). "
+            "Close exchanges (use_minimal_medium=true) before trusting yield."
+        )
+
+    return {
+        "carbon_imports": imports,
+        "carbon_exports": exports,
+        "total_carbon_import_mmol_per_h": round(total_c_in, 4),
+        "total_carbon_export_mmol_per_h": round(total_c_out, 4),
+        "side_door_carbon_imports": side_doors,
+        "feedstock_is_sole_carbon_source": len(side_doors) == 0,
+        "feedstock_rxn": feedstock_rxn,
+        "warnings": audit_warnings,
+    }
+
+
 def _apply_growth_constraints(
     model,
     biomass_rxn: Optional[str],
@@ -287,8 +376,9 @@ def _merge_scenario(
             "substrate_moles_per_product": substrate_moles_per_product,
             "use_minimal_medium": use_minimal_medium,
             "simulation_notes": simulation_notes or [],
-            "literature_refs": [],
-        }
+        "literature_refs": [],
+        "product_literature_refs": [],
+    }
 
     merged = {
         "carbon_source_rxn": scenario.get("carbon_source_rxn", carbon_source_rxn),
@@ -312,6 +402,7 @@ def _merge_scenario(
         "use_minimal_medium": scenario.get("use_minimal_medium", use_minimal_medium),
         "simulation_notes": (scenario.get("simulation_notes") or []) + (simulation_notes or []),
         "literature_refs": scenario.get("literature_refs") or [],
+        "product_literature_refs": scenario.get("product_literature_refs") or [],
     }
     return merged
 
@@ -322,12 +413,16 @@ def _assess_calibration(
     *,
     status: str,
     yield_corrected: Optional[float],
+    objective: str = "product",
+    has_product: bool = False,
+    carbon_audit: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Tell upstream agents how much to trust a run when literature is sparse.
 
-    Returns a structured report the orchestrator can gate on before citing flux
-    as an experimental prediction.
+    Distinguishes **medium/growth calibration** (uptake, CER, mu caps) from
+    **product calibration** (experimental flux/titer for the target product).
+    A wax run can be medium-calibrated while product flux remains unvalidated.
     """
     missing: List[str] = []
     warnings: List[str] = []
@@ -338,6 +433,14 @@ def _assess_calibration(
         missing.append("exchange_constraints (CER/O2/NH4/co-feed not pinned)")
     if ctx.get("max_growth_rate") is None:
         missing.append("max_growth_rate (growth not capped to experimental mu)")
+    if carbon_audit and not carbon_audit.get("feedstock_is_sole_carbon_source"):
+        missing.append(
+            "closed_carbon_exchanges (non-feedstock carbon import at boundary)"
+        )
+    if has_product and not ctx.get("product_literature_refs"):
+        missing.append(
+            "product_literature_refs (no experimental anchor for target product flux)"
+        )
     if ctx.get("min_growth_rate") is None and ctx.get("min_growth_fraction") == 0.1:
         warnings.append(
             "min_growth uses default fraction 0.1 of model max (often unrealistic)"
@@ -357,32 +460,72 @@ def _assess_calibration(
         )
     if yield_corrected is not None and yield_corrected > 1.0:
         warnings.append("corrected yield > 1.0; likely internal pool contribution")
+    if has_product and not ctx.get("product_literature_refs"):
+        warnings.append(
+            "Product flux is not anchored to wax-ester (or target) experimental data; "
+            "medium constraints alone do not validate product prediction."
+        )
+    if carbon_audit and not carbon_audit.get("feedstock_is_sole_carbon_source"):
+        for w in carbon_audit.get("warnings") or []:
+            warnings.append(w)
+        if not ctx.get("use_minimal_medium"):
+            warnings.append(
+                "use_minimal_medium=false with side-door carbon imports; "
+                "yield vs feedstock is not meaningful."
+            )
     if status != "optimal":
         warnings.append(f"FBA status is {status}; flux values not usable")
 
     n_missing = len(missing)
+    medium_missing = [m for m in missing if not m.startswith("product_literature")]
+    n_medium_missing = len(medium_missing)
+
     if status != "optimal":
+        medium_level = "invalid"
+        product_level = "invalid"
         level = "invalid"
         use_for = "debug_constraints_only"
-    elif n_missing >= 3:
+    elif n_medium_missing >= 3:
+        medium_level = "exploratory"
+        product_level = "unvalidated" if has_product else "not_applicable"
         level = "exploratory"
         use_for = "relative_ranking_of_designs_only"
-    elif n_missing >= 1:
+    elif n_medium_missing >= 1:
+        medium_level = "partial"
+        product_level = "unvalidated" if has_product else "not_applicable"
         level = "partial"
         use_for = "rank_designs_and_identify_bottlenecks; not experimental titers"
     else:
-        level = "literature_calibrated"
-        use_for = "quantitative_comparison_after_biomass_validation"
+        medium_level = "literature_calibrated"
+        if not has_product or objective == "biomass":
+            product_level = "not_applicable"
+            level = "literature_calibrated"
+            use_for = "quantitative_comparison_after_biomass_validation"
+        elif ctx.get("product_literature_refs"):
+            product_level = "literature_calibrated"
+            level = "literature_calibrated"
+            use_for = "quantitative_product_comparison_after_biomass_validation"
+        else:
+            product_level = "unvalidated"
+            level = "medium_calibrated"
+            use_for = (
+                "medium_and_growth_are_literature_pinned; "
+                "product_flux_is_in_silico_only_not_experimentally_anchored"
+            )
 
     return {
         "confidence_level": level,
+        "medium_confidence_level": medium_level,
+        "product_confidence_level": product_level,
         "recommended_use": use_for,
         "missing_literature_inputs": missing,
         "warnings": warnings,
         "literature_refs": ctx.get("literature_refs") or [],
+        "product_literature_refs": ctx.get("product_literature_refs") or [],
         "agent_guidance": (
             "Do not report predicted_product_flux as g/L or guaranteed titer unless "
-            "confidence_level is literature_calibrated and biomass validation passed."
+            "product_confidence_level is literature_calibrated and biomass validation "
+            "passed. medium_calibrated means growth/medium only — not product yield."
         ),
     }
 
@@ -641,10 +784,19 @@ def score_pathway(
 
         yield_corrected: Optional[float] = None
 
+        has_product = bool(
+            product_metabolite or product_demand_rxn or candidate_reactions
+        )
+
         if sol.status != "optimal":
             result["message"] += "Model infeasible under these constraints. "
             result["calibration"] = _assess_calibration(
-                ctx, growth_info, status=result["status"], yield_corrected=None
+                ctx,
+                growth_info,
+                status=result["status"],
+                yield_corrected=None,
+                objective=objective,
+                has_product=has_product,
             )
             return result
 
@@ -680,11 +832,26 @@ def score_pathway(
                     )
 
         # --- bottlenecks --------------------------------------------------- #
+        carbon_audit: Optional[Dict[str, Any]] = None
+        if has_product or objective == "product":
+            carbon_audit = audit_exchange_carbon(
+                model, sol.fluxes, feedstock_rxn=carbon_source_rxn
+            )
+            result["carbon_audit"] = carbon_audit
+            if carbon_audit.get("warnings"):
+                result["message"] += "[warn] " + " ".join(carbon_audit["warnings"]) + " "
+
         if product_rxn_id:
             result["bottlenecks"] = _find_bottlenecks(model, product_rxn_id)
 
         result["calibration"] = _assess_calibration(
-            ctx, growth_info, status=result["status"], yield_corrected=yield_corrected
+            ctx,
+            growth_info,
+            status=result["status"],
+            yield_corrected=yield_corrected,
+            objective=objective,
+            has_product=has_product,
+            carbon_audit=carbon_audit,
         )
         result["message"] += "OK"
         return result

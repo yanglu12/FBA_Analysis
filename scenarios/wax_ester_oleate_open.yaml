@@ -24,4 +24,5 @@ min_growth_fraction: 0.1
 max_growth_rate: null
 
 simulation_notes:
-  - "Open medium; internal lipid pools may inflate yield above feedstock stoichiometry."
+  - "Open medium; EX_glc imports carbon — do not trust yield vs oleate alone."
+  - "Use wax_ester_oleate_n_limited.yaml for oleate-only carbon closure."

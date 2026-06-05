@@ -188,6 +188,12 @@ print(out["calibration"]["confidence_level"])
   "inserted_reactions": ["FAR", "WS"],
   "edits_applied": { "knocked_out": ["ACOAO4p", "..."], "not_found": [] },
   "bottlenecks": [ { "reaction": "...", "flux": 1.2, "span": 0.0, "at_bound": true } ],
+  "carbon_audit": {
+    "feedstock_is_sole_carbon_source": true,
+    "side_door_carbon_imports": [],
+    "total_carbon_import_mmol_per_h": 59.5084,
+    "carbon_imports": [ { "exchange": "EX_ocdcea_...", "carbon_mmol_per_h": 59.5084 } ]
+  },
   "message": "OK"
 }
 ```
@@ -202,6 +208,7 @@ print(out["calibration"]["confidence_level"])
 | `growth_rate` | Check against experimental μ; unrealistic μ → tighten scenario. |
 | `bottlenecks` | Reactions to OE or unblock in next design iteration. |
 | `calibration.confidence_level` | Gate how strongly to cite the number. |
+| `carbon_audit` | Boundary carbon imports/exports; check `feedstock_is_sole_carbon_source`. |
 
 ---
 
@@ -209,14 +216,22 @@ print(out["calibration"]["confidence_level"])
 
 Every result includes `calibration`. **Do not skip it.**
 
+Reported fields:
+
+- `confidence_level` — conservative overall label
+- `medium_confidence_level` — uptake / exchange / growth caps
+- `product_confidence_level` — `not_applicable` | `unvalidated` | `literature_calibrated`
+
 | `confidence_level` | Meaning | Agent may |
 |---|---|---|
-| `exploratory` | ≥3 missing literature inputs | Rank designs relative to each other only |
-| `partial` | 1–2 missing inputs | Rank + bottlenecks; label as in silico upper bound |
-| `literature_calibrated` | Scenario cites literature + exchange pins + growth cap | Quantitative comparison after biomass validation |
+| `exploratory` | ≥3 missing medium/growth inputs | Rank designs relative to each other only |
+| `partial` | 1–2 missing medium inputs | Rank + bottlenecks; in silico upper bound |
+| `medium_calibrated` | Medium/growth pinned; no `product_literature_refs` | Trust μ/medium; **not** product titer |
+| `literature_calibrated` | Biomass fully pinned, or product + product literature | Quantitative comparison after biomass validation |
 | `invalid` | Infeasible or error | Debug constraints only |
 
-Missing inputs checked: `literature_refs`, `exchange_constraints`, `max_growth_rate`.
+Medium inputs checked: `literature_refs`, `exchange_constraints`, `max_growth_rate`.  
+Product runs also require `product_literature_refs` for `product_confidence_level: literature_calibrated`.
 
 ---
 
@@ -252,6 +267,7 @@ literature review (or your experimental dataset) and passed as parameters or a
 | `max_growth_rate` / `min_growth_rate` | Batch μ from growth curves | Any production phase |
 | `use_minimal_medium` | Methods section (“minimal medium”, closed exchanges) | Most validation papers |
 | `substrate_moles_per_product` | Pathway stoichiometry | Multi-substrate products (wax, polymers) |
+| `product_literature_refs` | Experimental product flux/titer papers | Required for product confidence |
 | `knockouts`, `bound_overrides` | Strain design papers | Any engineered strain |
 
 ### Bundled scenario files
@@ -267,12 +283,18 @@ When `use_minimal_medium: true`, you **must** list essential cofeed exchanges
 (O₂, NH₄⁺, Pi, SO₄, ions, H₂O, H⁺) in `exchange_constraints` or the model
 will be infeasible.
 
+**Product runs:** always inspect `carbon_audit` in the result. If
+`feedstock_is_sole_carbon_source` is false, non-feedstock exchanges (often
+`EX_glc_LPAREN_e_RPAREN_`) are importing carbon and yield vs the named
+feedstock is not trustworthy until those exchanges are closed.
+
 ---
 
 ## 9. Accuracy expectations
 
-- **Raw FBA on open medium over-predicts** wax yield and growth μ for oleate
-  because internal lipid pools can supply carbon beyond feedstock uptake.
+- **Open medium allows glucose and other carbon side doors** — use
+  `use_minimal_medium: true` for oleate-only runs; read `carbon_audit`.
+- **Raw FBA on open medium over-predicts** wax yield when `EX_glc` etc. import carbon.
 - **iYLI647 was validated on glucose/glycerol**, not wax esters — no direct
   literature benchmark exists for wax product flux on this model.
 - **`literature_calibrated`** still means mmol/gDW/h, not g/L until you add

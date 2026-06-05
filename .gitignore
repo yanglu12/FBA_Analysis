@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.egg-info/
+
+# Local verification scripts (not published to remote)
+testing_debugging/

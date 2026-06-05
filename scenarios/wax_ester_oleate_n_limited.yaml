@@ -3,22 +3,35 @@
 
 name: wax_ester_oleate_n_limited
 description: >
-  Nitrogen-limited lipid-accumulation mode on oleate. Closer to experimental WE
-  shake-flask protocols (N-limited medium + fatty acid feed).
+  Nitrogen-limited lipid-accumulation mode on oleate. Minimal medium closes
+  side-door carbon exchanges (e.g. glucose) so oleate is the sole carbon import.
 
 literature_refs:
   - "Mishra et al. 2018 BMC Syst Biol - iYLI647 model, N vs C limited biomass equations"
   - "Iowa State WE work - Y. lipolytica N-limited medium with oleic/WCO feed"
   - "Xu et al. 2016 - FAEE production context (related, lower titers)"
 
+# No wax-ester flux/titer benchmark on iYLI647 — product flux stays unvalidated
+# until experimental WE data are added here.
+product_literature_refs: []
+
 biomass_rxn: BIOMASS_yarrowia_nitrogen_limiting
 carbon_source_rxn: EX_ocdcea_LPAREN_e_RPAREN_
 carbon_source_uptake: 10.0
-use_minimal_medium: false   # set true after filling full minimal-medium exchange set from find_ids
+use_minimal_medium: true
 substrate_moles_per_product: 2.0
 
+# Minimal-medium cofeeds + low N. All other carbon exchanges closed (no glucose side door).
 exchange_constraints:
-  EX_nh4_LPAREN_e_RPAREN_: [-1.0, 0.0]      # low N uptake → nitrogen-limited mode (tune from medium)
+  EX_co2_LPAREN_e_RPAREN_: [0.0, 1000.0]
+  EX_o2_LPAREN_e_RPAREN_: [-1000.0, 0.0]
+  EX_nh4_LPAREN_e_RPAREN_: [-1.0, 0.0]
+  EX_h2o_LPAREN_e_RPAREN_: [-1000.0, 1000.0]
+  EX_h_LPAREN_e_RPAREN_: [-1000.0, 1000.0]
+  EX_pi_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_so4_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_k_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_na1_LPAREN_e_RPAREN_: [-10.0, 0.0]
 
 knockouts:
   - ACOAO4p
@@ -31,8 +44,10 @@ knockouts:
   # - TGL3
 
 min_growth_rate: 0.01
-max_growth_rate: 0.15   # typical batch mu order-of-magnitude; tune to your dataset
+max_growth_rate: 0.15
 
 simulation_notes:
-  - "Set CER/O2/NH4 bounds from experimental fluxomics or Mishra 2018 validation tables."
+  - "use_minimal_medium=true closes EX_glc and other carbon side doors."
+  - "Check carbon_audit.feedstock_is_sole_carbon_source in score_pathway output."
+  - "confidence_level medium_calibrated = growth/medium pinned, product flux NOT validated."
   - "Report yield_corrected_mol_per_mol_substrate (not raw yield) to agents."

@@ -62,7 +62,9 @@ Without these, the same model **over-predicts** product flux and growth (open me
 ```
 
 **Never** call `score_pathway()` on a new model without step 1.  
-**Never** report `predicted_product_flux` as guaranteed titer unless `calibration.confidence_level == "literature_calibrated"` **and** biomass validation has passed.
+**Never** report `predicted_product_flux` as guaranteed titer unless
+`product_confidence_level` is `literature_calibrated` **and** biomass validation
+has passed. `medium_calibrated` pins growth/medium only — not product yield.
 
 Full API spec: `FBA_TOOL_CONTRACT.md`.
 
@@ -75,7 +77,7 @@ Command: `python run_all_tests.py` (conda env `fba`, model `iYLI647.xml`)
 | Scenario | FBA status | Product flux (mmol/gDW/h) | Growth μ (1/h) | Yield corrected (mol/mol) | Calibration |
 |---|---:|---:|---:|---:|---|
 | `wax_ester_oleate_open` | optimal | 5.36 | 0.94 | 0.27 | **partial** |
-| `wax_ester_oleate_n_limited` | optimal | 5.75 | 0.01 | 0.29 | **literature_calibrated** |
+| `wax_ester_oleate_n_limited` | optimal | ~1.12 | 0.01 | ~0.06–0.17 | **medium_calibrated** |
 | `iyli647_glucose_validation` (biomass) | optimal | — | **0.24** | — | **literature_calibrated** |
 | `exploratory_no_literature` | optimal | 5.36 | 0.94 | 0.27 | **exploratory** |
 
@@ -89,9 +91,15 @@ Also passed: `find_ids.py --json` (status ok), `fba_tool.py` textbook self-test 
 - iYLI647 was validated on glucose/glycerol in the original paper; this scenario aligns with that literature.
 
 **N-limited wax scenario (`wax_ester_oleate_n_limited.yaml`)**  
-- Best current template for **production-mode** oleate feeding: nitrogen-limited biomass equation, low NH₄⁺ uptake, growth capped at 0.01–0.15 h⁻¹.  
-- Corrected yield ~0.29 mol wax / mol oleate feed (vs theoretical 0.5 from 2×C18 stoichiometry) — remaining gap likely from internal lipid reallocation, not feedstock alone.  
-- **Recommended default** when the agent needs defensible numbers for team review.
+- Uses **`use_minimal_medium: true`** so oleate is the sole carbon import (closes `EX_glc` side door).  
+- Open-medium runs inflated product flux (~5.7 mmol/gDW/h) because **glucose exchange imported 60 mmol C/h** alongside oleate — not internal pool export at steady state.  
+- With closed carbon exchanges, product flux ~**1.1 mmol/gDW/h**; wax C ≤ total boundary carbon import.  
+- **`medium_calibrated`** — medium/growth pinned; **`product_confidence_level: unvalidated`**.
+
+**Verification (`testing_debugging/`)**  
+- **Pathway attribution PASS:** WS/FAR knockout → product flux 0.  
+- **Stoichiometry PASS:** FAR uses 2 NADPH per flux; FAR+WS consume 2× oleoyl-CoA per wax.  
+- **Carbon audit:** Side-door `EX_glc_LPAREN_e_RPAREN_` explains >100% yield vs oleate alone on open medium; fixed by minimal medium.
 
 **Open / exploratory wax scenarios**  
 - Same raw product flux (~5.4 mmol/gDW/h) but **μ ≈ 0.94 h⁻¹** (unrealistic for N-limited production).  
@@ -104,7 +112,8 @@ Also passed: `find_ids.py --json` (status ok), `fba_tool.py` textbook self-test 
 
 | Issue (uncalibrated agent call) | Root cause | Mitigation in current tool |
 |---|---|---|
-| Product flux ~5.4, yield >0.5 mol/mol | Open medium + internal oleoyl-CoA/lipid pools | N-limited scenario + `substrate_moles_per_product: 2.0` + read `yield_corrected_*` |
+| Product flux ~5.4 on open medium | `EX_glc` etc. import carbon when medium open | `use_minimal_medium: true` + read `carbon_audit` |
+| Yield >100% vs oleate alone | Side-door carbon exchanges, not internal pools | Close non-feedstock carbon imports |
 | Growth μ ~0.94 h⁻¹ on oleate | No experimental μ cap; model max ~9.35 h⁻¹ | `max_growth_rate` in scenario YAML |
 | Wrong knockouts (POX1) | Gene names absent in model | `find_ids.py` → `gene_alias_resolution`, reaction IDs |
 | Meaningless flux = 0 | Invented metabolite/reaction IDs | Preflight + copy from `recommended` |
@@ -122,12 +131,17 @@ Also passed: `find_ids.py --json` (status ok), `fba_tool.py` textbook self-test 
 
 ## 6. Calibration levels (agent decision table)
 
+Two axes are reported: **`medium_confidence_level`** and **`product_confidence_level`**.
+
 | `confidence_level` | When | Agent should |
 |---|---|---|
-| `exploratory` | ≥3 missing literature inputs | Rank designs relative to each other only; no titer language |
-| `partial` | 1–2 missing inputs (e.g. no growth cap) | Rank + identify bottlenecks; label as *in silico* upper bound |
-| `literature_calibrated` | Scenario cites literature + exchange pins + growth cap | Quantitative comparison *after* biomass check; still not g/L without extra conversion |
+| `exploratory` | ≥3 missing medium/growth inputs | Rank designs relative to each other only |
+| `partial` | 1–2 missing medium inputs | Rank + bottlenecks; in silico upper bound |
+| `medium_calibrated` | Medium/growth pinned; no product literature | Trust μ/medium; **do not** cite product flux as validated titer |
+| `literature_calibrated` | Biomass fully pinned, or product + `product_literature_refs` | Quantitative comparison after biomass check |
 | `invalid` | FBA infeasible/error | Debug constraints; do not rank |
+
+Add experimental wax data to `product_literature_refs` in scenario YAML to upgrade product confidence.
 
 ---
 
@@ -165,6 +179,7 @@ Also passed: `find_ids.py --json` (status ok), `fba_tool.py` textbook self-test 
 | `scenarios/iyli647_glucose_validation.yaml` | Biomass sanity check vs Mishra/Workman |
 | `scenarios/exploratory_no_literature.yaml` | Novel-pathway template (exploratory only) |
 | `run_all_tests.py` | One-command trial run + summary table |
+| `testing_debugging/` | Pathway, stoichiometry, carbon verification |
 | `iYLI647.xml` | Canonical SBML model |
 
 ---
@@ -173,7 +188,12 @@ Also passed: `find_ids.py --json` (status ok), `fba_tool.py` textbook self-test 
 
 The FBA tool **does improve agent output quality** when integrated as specified: preflight → scenario-driven constraints → calibration-aware reporting. It transforms raw FBA from a misleading “single number” into a **gated recommendation** (rank vs compare vs invalid).
 
-For wax-ester strain design on oleate, **`literature_calibrated` N-limited runs** (~0.29 corrected mol/mol, μ ≈ 0.01 h⁻¹) are the most defensible current predictions. **Exploratory/open runs** remain useful for comparing knockout sets but must not be presented as expected experimental titers.
+For wax-ester strain design on oleate, **`medium_calibrated`** N-limited runs with
+**minimal medium** (~1.1 mmol/gDW/h product, oleate sole carbon source) are the
+most honest current predictions: medium is pinned, product flux is **not**
+experimentally anchored. **Exploratory/open
+runs** remain useful for comparing knockout sets but must not be presented as
+expected experimental titers.
 
 Biomass validation on glucose now **passes** (optimal, μ = 0.24 h⁻¹), establishing trust in model loading and medium setup before product objectives are run.
 

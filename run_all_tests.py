@@ -47,6 +47,8 @@ def row(name: str, out: dict) -> dict:
         "yield_raw": out.get("yield_mol_per_mol_substrate"),
         "yield_corr": out.get("yield_corrected_mol_per_mol_substrate"),
         "confidence": cal.get("confidence_level"),
+        "medium_conf": cal.get("medium_confidence_level"),
+        "product_conf": cal.get("product_confidence_level"),
         "use_for": cal.get("recommended_use"),
         "warnings": len(cal.get("warnings") or []),
         "missing_lit": len(cal.get("missing_literature_inputs") or []),
@@ -110,6 +112,10 @@ def main() -> None:
             f"prod={str(r['product']):6s} | growth={str(r['growth']):6s} | "
             f"ycorr={str(r['yield_corr']):6s} | conf={r['confidence']}"
         )
+        if r.get("medium_conf") or r.get("product_conf"):
+            print(
+                f"    └ medium={r['medium_conf']} product={r['product_conf']}"
+            )
         if r["warnings"] or r["missing_lit"]:
             print(f"    └ missing_lit={r['missing_lit']} warnings={r['warnings']}")
 

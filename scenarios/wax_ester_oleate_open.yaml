@@ -1,0 +1,27 @@
+# Uncalibrated demo (optimistic upper bound). For relative design ranking only.
+name: wax_ester_oleate_open
+description: >
+  Oleate feedstock, carbon-limited biomass, no CER cap. Matches early contract demo;
+  over-predicts vs experiment.
+
+literature_refs:
+  - "Not validated against a specific paper scenario"
+
+biomass_rxn: BIOMASS_yarrowia_carbon_limiting
+carbon_source_rxn: EX_ocdcea_LPAREN_e_RPAREN_
+carbon_source_uptake: 10.0
+use_minimal_medium: false
+substrate_moles_per_product: 2.0   # C36 wax from 2x C18 oleate (biochemistry)
+
+knockouts:
+  - ACOAO4p
+  - ACOAO5p
+  - ACOAO7p
+  - ACOAO8p
+  - ACOAO9p
+
+min_growth_fraction: 0.1
+max_growth_rate: null
+
+simulation_notes:
+  - "Open medium; internal lipid pools may inflate yield above feedstock stoichiometry."

@@ -1,0 +1,40 @@
+# Biomass validation scenario aligned with Mishra et al. 2018 Fig. 2 (Workman Dataset 2).
+# Workman batch glucose: mu = 0.24 h-1; Mishra comparative uptake = 10 mmol/gDW/h.
+
+name: iyli647_glucose_validation
+description: >
+  Biomass sanity check on glucose minimal medium with CER/O2/N cofeeds.
+  Compare predicted growth_rate to expected_experimental_growth_rate before
+  trusting wax-ester product runs.
+
+literature_refs:
+  - "Workman et al. 2013 AMB Express 3:58 (batch glucose, mu = 0.24 h-1)"
+  - "Mishra et al. 2018 BMC Syst Biol 10.1186/s12918-018-0542-5 (Fig. 2 validation)"
+
+biomass_rxn: BIOMASS_yarrowia_carbon_limiting
+carbon_source_rxn: EX_glc_LPAREN_e_RPAREN_
+carbon_source_uptake: 10.0
+use_minimal_medium: true
+substrate_moles_per_product: 1.0
+
+# Minimal-medium cofeeds (required when use_minimal_medium=true).
+# CER upper bound is generous; tighten from Workman batch qCO2 when available.
+exchange_constraints:
+  EX_co2_LPAREN_e_RPAREN_: [0.0, 25.0]
+  EX_o2_LPAREN_e_RPAREN_: [-1000.0, 0.0]
+  EX_nh4_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_h2o_LPAREN_e_RPAREN_: [-1000.0, 1000.0]
+  EX_h_LPAREN_e_RPAREN_: [-1000.0, 1000.0]
+  EX_pi_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_so4_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_k_LPAREN_e_RPAREN_: [-10.0, 0.0]
+  EX_na1_LPAREN_e_RPAREN_: [-10.0, 0.0]
+
+# Experimental batch mu from Workman 2013 (pins validation target for trial runs).
+max_growth_rate: 0.24
+expected_experimental_growth_rate: 0.24
+
+simulation_notes:
+  - "Call score_pathway(..., scenario=this_file, objective='biomass')."
+  - "If growth_rate matches expected_experimental_growth_rate, biomass validation passed."
+  - "Remove max_growth_rate to test unconstrained model prediction vs experiment."

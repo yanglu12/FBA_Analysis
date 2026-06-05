@@ -1,0 +1,32 @@
+# Explicit template for novel pathways with no citation-backed medium constraints.
+# Agents should expect calibration.confidence_level = exploratory or partial.
+
+name: exploratory_no_literature
+description: >
+  Oleate wax-ester demo without literature exchange pins or growth cap.
+  Use only for relative ranking of candidate designs — not experimental titers.
+
+literature_refs: []   # intentionally empty — triggers exploratory calibration
+
+biomass_rxn: BIOMASS_yarrowia_carbon_limiting
+carbon_source_rxn: EX_ocdcea_LPAREN_e_RPAREN_
+carbon_source_uptake: 10.0
+use_minimal_medium: false
+substrate_moles_per_product: 2.0   # C36 wax from 2x C18 oleate
+
+exchange_constraints: {}
+
+knockouts:
+  - ACOAO4p
+  - ACOAO5p
+  - ACOAO7p
+  - ACOAO8p
+  - ACOAO9p
+
+min_growth_fraction: 0.1
+max_growth_rate: null
+
+simulation_notes:
+  - "No CER/O2/NH4 pins — calibration will flag missing_literature_inputs."
+  - "Prefer wax_ester_oleate_n_limited.yaml when N-limited production is the target."
+  - "Read calibration.warnings before citing predicted_product_flux."

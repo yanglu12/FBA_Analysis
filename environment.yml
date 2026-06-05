@@ -1,0 +1,37 @@
+# Conda environment for FBA_analysis (fba_tool.py)
+#
+# Create / update:
+#   conda env create -f environment.yml
+#   conda env update -f environment.yml --prune
+#
+# Activate:
+#   conda activate fba
+
+name: fba
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.12
+
+  # Core FBA stack (cobrapy)
+  - cobra
+  - optlang
+
+  # SBML model loading (read_sbml_model for iYLI647.xml, etc.)
+  - libsbml
+
+  # LP solver used by cobra for optimize() and FVA
+  - swiglpk
+
+  # Scientific stack (cobra dependencies; used directly in FVA bottleneck code)
+  - numpy
+  - scipy
+  - pandas
+
+  # Optional but useful for agent / notebook workflows
+  - pip
+  - pip:
+      - rich
+      - pyyaml
